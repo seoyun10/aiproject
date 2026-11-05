@@ -15,28 +15,27 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# 파일 경로 설정
-# pages 폴더의 상위 폴더에서 CSV 파일 찾기
+# 상위 폴더 경로 설정
 # --------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = BASE_DIR / "popultion.csv"
 
-# --------------------------------------------------
-# 한글 폰트 및 디자인
-# --------------------------------------------------
 PINK = "#FF1493"
 
+# --------------------------------------------------
+# 화면 디자인
+# --------------------------------------------------
 st.markdown("""
 <style>
-    .main-title {
-        font-size: 32px;
-        font-weight: bold;
-        color: #FF1493;
-    }
-    .sub-title {
-        color: #777777;
-        font-size: 15px;
-    }
+.main-title {
+    font-size: 32px;
+    font-weight: bold;
+    color: #FF1493;
+}
+.sub-title {
+    color: #777777;
+    font-size: 15px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,18 +43,21 @@ st.markdown(
     '<p class="main-title">📊 서울시 연령별 인구 분석</p>',
     unsafe_allow_html=True
 )
+
 st.markdown(
-    '<p class="sub-title">행정구역과 성별, 연도를 선택하여 연령별 인구를 분석해 보세요.</p>',
+    '<p class="sub-title">행정구역, 성별, 연도를 선택하여 연령별 인구를 분석해 보세요.</p>',
     unsafe_allow_html=True
 )
 
 st.divider()
 
 # --------------------------------------------------
-# CSV 한글 인코딩 자동 처리
+# CSV 파일 읽기 및 한글 인코딩 처리
 # --------------------------------------------------
 def read_csv_safely(file):
     encodings = ["utf-8-sig", "cp949", "euc-kr", "utf-8"]
+
+    last_error = None
 
     for encoding in encodings:
         try:
@@ -64,14 +66,17 @@ def read_csv_safely(file):
             else:
                 file.seek(0)
                 return pd.read_csv(file, encoding=encoding)
-        except (UnicodeDecodeError, UnicodeError):
-            continue
 
-    raise ValueError("CSV 파일의 인코딩을 확인할 수 없습니다.")
+        except UnicodeDecodeError as e:
+            last_error = e
+
+    raise ValueError(
+        f"CSV 인코딩을 확인할 수 없습니다: {last_error}"
+    )
 
 
 # --------------------------------------------------
-# 열 이름 표준화
+# 열 이름 정리
 # --------------------------------------------------
 def clean_columns(df):
     df.columns = [
@@ -84,21 +89,23 @@ def clean_columns(df):
 def find_column(columns, keywords):
     for col in columns:
         name = str(col).replace(" ", "").lower()
+
         if any(keyword in name for keyword in keywords):
             return col
+
     return None
 
 
 # --------------------------------------------------
 # 세로형 데이터 처리
-# 예: 행정구역, 성별, 연도, 나이, 인구수
+# 행정구역, 성별, 연도, 나이, 인구수
 # --------------------------------------------------
 def normalize_long_format(df):
     df = clean_columns(df)
 
     area_col = find_column(
         df.columns,
-        ["행정구역", "자치구", "지역", "구분"]
+        ["행정구역", "자치구", "지역"]
     )
 
     sex_col = find_column(
@@ -113,12 +120,12 @@ def normalize_long_format(df):
 
     age_col = find_column(
         df.columns,
-        ["나이", "연령", "연령별"]
+        ["나이", "연령"]
     )
 
     population_col = find_column(
         df.columns,
-        ["인구수", "인구", "총인구"]
+        ["인구수", "인구"]
     )
 
     if not all([
@@ -148,12 +155,17 @@ def normalize_long_format(df):
         "인구수"
     ]
 
-    result["행정구역"] = result["행정구역"].astype(str).str.strip()
-    result["성별"] = result["성별"].astype(str).str.strip()
+    result["행정구역"] = (
+        result["행정구역"].astype(str).str.strip()
+    )
+
+    result["성별"] = (
+        result["성별"].astype(str).str.strip()
+    )
 
     result["연도"] = (
         result["연도"].astype(str)
-        .str.extract(r"(\d{4})")[0]
+        .str.extract(r"(20\d{2})")[0]
     )
 
     result["나이"] = (
@@ -166,11 +178,22 @@ def normalize_long_format(df):
         errors="coerce"
     )
 
-    result["연도"] = pd.to_numeric(result["연도"], errors="coerce")
-    result["나이"] = pd.to_numeric(result["나이"], errors="coerce")
+    result["연도"] = pd.to_numeric(
+        result["연도"], errors="coerce"
+    )
+
+    result["나이"] = pd.to_numeric(
+        result["나이"], errors="coerce"
+    )
 
     result = result.dropna(
-        subset=["행정구역", "성별", "연도", "나이", "인구수"]
+        subset=[
+            "행정구역",
+            "성별",
+            "연도",
+            "나이",
+            "인구수"
+        ]
     )
 
     result["연도"] = result["연도"].astype(int)
@@ -181,14 +204,13 @@ def normalize_long_format(df):
 
 # --------------------------------------------------
 # 가로형 데이터 처리
-# 예: 2025년_남자_0세, 2025년_여자_0세
 # --------------------------------------------------
 def normalize_wide_format(df):
     df = clean_columns(df)
 
     area_col = find_column(
         df.columns,
-        ["행정구역", "자치구", "지역", "구분"]
+        ["행정구역", "자치구", "지역"]
     )
 
     if area_col is None:
@@ -197,24 +219,35 @@ def normalize_wide_format(df):
     records = []
 
     for _, row in df.iterrows():
+
         area = str(row[area_col]).strip()
 
         for col in df.columns:
+
             if col == area_col:
                 continue
 
             col_name = str(col).replace(" ", "")
 
-            year_match = re.search(r"(20\d{2})", col_name)
-            age_match = re.search(r"(\d+)\s*세", col_name)
+            year_match = re.search(
+                r"(20\d{2})",
+                col_name
+            )
+
+            age_match = re.search(
+                r"(\d+)\s*세",
+                col_name
+            )
 
             if not year_match or not age_match:
                 continue
 
             if "남자" in col_name or "남성" in col_name:
                 sex = "남자"
+
             elif "여자" in col_name or "여성" in col_name:
                 sex = "여자"
+
             else:
                 continue
 
@@ -246,25 +279,37 @@ def normalize_wide_format(df):
 st.subheader("📁 데이터 불러오기")
 
 uploaded_file = st.file_uploader(
-    "연령별 인구 데이터 CSV 파일을 업로드할 수도 있습니다.",
+    "연령별 인구 데이터 CSV 파일 업로드",
     type=["csv"]
 )
 
 try:
     if uploaded_file is not None:
+
         raw_df = read_csv_safely(uploaded_file)
+
         st.success("업로드한 CSV 파일을 불러왔습니다.")
+
     elif DATA_FILE.exists():
+
         raw_df = read_csv_safely(DATA_FILE)
-        st.success("상위 폴더의 popultion.csv 파일을 불러왔습니다.")
+
+        st.success("상위 폴더의 CSV 파일을 불러왔습니다.")
+
     else:
+
         st.error(
-            "CSV 파일을 찾을 수 없습니다. "
-            "프로젝트 상위 폴더에 popultion.csv 파일이 있는지 확인해 주세요."
+            "popultion.csv 파일을 찾을 수 없습니다."
         )
+
+        st.info(
+            f"파일을 다음 위치에 넣어 주세요: {DATA_FILE}"
+        )
+
         st.stop()
 
 except Exception as e:
+
     st.error(f"CSV 파일을 읽는 중 오류가 발생했습니다: {e}")
     st.stop()
 
@@ -278,23 +323,24 @@ if df is None:
     df = normalize_wide_format(raw_df)
 
 if df is None or df.empty:
+
     st.warning(
         "현재 CSV 파일에서 연령별 인구 데이터를 찾지 못했습니다."
     )
 
     st.info(
-        "이 그래프를 사용하려면 다음 항목이 포함된 "
-        "연령별 인구 데이터가 필요합니다."
+        "연령별 인구 데이터에는 행정구역, 성별, 연도, 나이, 인구수가 필요합니다."
     )
 
-    st.code(
-        "행정구역, 성별, 연도, 나이, 인구수\n"
-        "종로구, 남자, 2025, 0, 1200\n"
-        "종로구, 남자, 2025, 1, 1300\n"
-        "종로구, 여자, 2025, 0, 1100"
-    )
+    st.code("""
+행정구역,성별,연도,나이,인구수
+종로구,남자,2025,0,1200
+종로구,남자,2025,1,1300
+종로구,여자,2025,0,1100
+""")
 
-    st.caption("현재 CSV의 열 이름:")
+    st.caption("현재 CSV 파일의 열 이름")
+
     st.write(list(raw_df.columns))
 
     st.stop()
@@ -304,12 +350,15 @@ if df is None or df.empty:
 # 성별 데이터 정리
 # --------------------------------------------------
 def normalize_sex(value):
+
     value = str(value).strip()
 
     if "남" in value:
         return "남자"
+
     elif "여" in value:
         return "여자"
+
     elif value in ["전체", "계", "합계"]:
         return "전체"
 
@@ -320,14 +369,17 @@ df["성별"] = df["성별"].apply(normalize_sex)
 
 
 # --------------------------------------------------
-# 선택 메뉴
+# 분석 조건 선택
 # --------------------------------------------------
 st.subheader("🔍 분석 조건 선택")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    areas = sorted(df["행정구역"].dropna().unique().tolist())
+
+    areas = sorted(
+        df["행정구역"].dropna().unique().tolist()
+    )
 
     selected_area = st.selectbox(
         "행정구역 선택",
@@ -335,7 +387,10 @@ with col1:
     )
 
 with col2:
-    sexes = sorted(df["성별"].dropna().unique().tolist())
+
+    sexes = sorted(
+        df["성별"].dropna().unique().tolist()
+    )
 
     selected_sex = st.selectbox(
         "성별 선택",
@@ -343,6 +398,7 @@ with col2:
     )
 
 with col3:
+
     years = sorted(
         df["연도"].dropna().unique().tolist(),
         reverse=True
@@ -355,7 +411,7 @@ with col3:
 
 
 # --------------------------------------------------
-# 선택 조건에 맞는 데이터 추출
+# 선택한 조건에 맞는 데이터 추출
 # --------------------------------------------------
 filtered_df = df[
     (df["행정구역"] == selected_area) &
@@ -366,11 +422,12 @@ filtered_df = df[
 filtered_df = filtered_df.sort_values("나이")
 
 
-# --------------------------------------------------
-# 데이터 존재 여부 확인
-# --------------------------------------------------
 if filtered_df.empty:
-    st.warning("선택한 조건에 해당하는 데이터가 없습니다.")
+
+    st.warning(
+        "선택한 조건에 해당하는 데이터가 없습니다."
+    )
+
     st.stop()
 
 
@@ -378,9 +435,12 @@ if filtered_df.empty:
 # 주요 통계
 # --------------------------------------------------
 st.divider()
+
 st.subheader("📌 분석 결과")
 
-total_population = int(filtered_df["인구수"].sum())
+total_population = int(
+    filtered_df["인구수"].sum()
+)
 
 max_age_row = filtered_df.loc[
     filtered_df["인구수"].idxmax()
@@ -408,6 +468,7 @@ metric3.metric(
 # 꺾은선 그래프
 # --------------------------------------------------
 st.divider()
+
 st.subheader("📈 연령별 인구 꺾은선 그래프")
 
 fig = go.Figure()
@@ -418,14 +479,17 @@ fig.add_trace(
         y=filtered_df["인구수"],
         mode="lines+markers",
         name="인구수",
+
         line=dict(
             color=PINK,
             width=3
         ),
+
         marker=dict(
             color=PINK,
             size=7
         ),
+
         hovertemplate=(
             "나이: %{x}세<br>"
             "인구수: %{y:,.0f}명"
@@ -436,19 +500,27 @@ fig.add_trace(
 
 fig.update_layout(
     title=dict(
-        text=f"{selected_area} {selected_sex} {selected_year}년 연령별 인구",
+        text=(
+            f"{selected_area} {selected_sex} "
+            f"{selected_year}년 연령별 인구"
+        ),
         x=0.5,
         font=dict(size=20)
     ),
+
     xaxis_title="나이",
     yaxis_title="인구수",
+
     height=550,
+
     plot_bgcolor="white",
     paper_bgcolor="white",
+
     font=dict(
         family="Malgun Gothic, AppleGothic, NanumGothic, sans-serif",
         size=13
     ),
+
     hovermode="x unified"
 )
 
@@ -483,6 +555,7 @@ st.plotly_chart(
 # 데이터 표
 # --------------------------------------------------
 st.divider()
+
 st.subheader("📋 연령별 인구 데이터")
 
 display_df = filtered_df[
@@ -524,5 +597,6 @@ st.download_button(
     mime="text/csv"
 )
 
-st.caption("※ 데이터에 포함된 연령별 인구수를 기준으로 분석합니다.")
-
+st.caption(
+    "※ 업로드하거나 불러온 연령별 인구 데이터를 기준으로 분석합니다."
+)
