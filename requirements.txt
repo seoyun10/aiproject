@@ -3,3 +3,6 @@ folium
 streamlit-folium
 pandas>=2.0.0,<3.0
 plotly>=5.20.0,<7.0
+numpy>=1.26.0,<3.0
+scikit-learn>=1.4.0,<2.0
+statsmodels>=0.14.0,<1.0
