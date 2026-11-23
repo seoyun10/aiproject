@@ -17,7 +17,7 @@ st.title("🇰🇷 대한민국 범죄 현황 분석")
 st.write("전국 시·군·구별 범죄 발생 현황을 분석합니다.")
 
 # CSV 파일 경로
-DATA_PATH = Path(__file__).parent / "crime(1).csv"
+DATA_PATH = Path(__file__).parent / "crime.csv"
 
 # 2. 전국 광역지역 중심 좌표
 REGION_COORDS = {
