@@ -6,25 +6,28 @@ import folium
 from streamlit_folium import st_folium
 from pathlib import Path
 
-# --------------------------------------------------
+# ==========================================
 # 1. 페이지 설정
-# --------------------------------------------------
+# ==========================================
+
 st.set_page_config(
     page_title="대한민국 범죄 현황 분석",
-    page_icon="🔎",
+    page_icon="🗺️",
     layout="wide"
 )
 
 st.title("🇰🇷 대한민국 범죄 현황 분석")
-st.caption("전국 시·군·구별 범죄 발생 건수를 범죄 유형에 따라 분석합니다.")
+st.write("전국 지역별 범죄 발생 현황을 지도와 그래프로 분석합니다.")
 
-# app.py와 crime.csv를 같은 폴더에 넣어주세요.
+# CSV 파일 경로
 DATA_PATH = Path(__file__).parent / "crime.csv"
 
-# --------------------------------------------------
-# 2. 전국 광역자치단체 중심 좌표
-# --------------------------------------------------
-PROVINCE_COORDS = {
+
+# ==========================================
+# 2. 지역별 좌표
+# ==========================================
+
+REGION_COORDS = {
     "서울": (37.5665, 126.9780),
     "부산": (35.1796, 129.0756),
     "대구": (35.8714, 128.6014),
@@ -32,9 +35,9 @@ PROVINCE_COORDS = {
     "광주": (35.1595, 126.8526),
     "대전": (36.3504, 127.3845),
     "울산": (35.5384, 129.3114),
-    "세종시": (36.4800, 127.2890),
-    "경기도": (37.4138, 127.5183),
-    "강원도": (37.8228, 128.1555),
+    "세종": (36.4800, 127.2890),
+    "경기": (37.4138, 127.5183),
+    "강원": (37.8228, 128.1555),
     "충북": (36.6357, 127.4914),
     "충남": (36.6588, 126.6728),
     "전북": (35.7175, 127.1530),
@@ -44,136 +47,119 @@ PROVINCE_COORDS = {
     "제주": (33.4996, 126.5312)
 }
 
-PROVINCE_PREFIXES = [
-    "경기도", "강원도", "서울", "부산", "대구", "인천",
-    "광주", "대전", "울산", "세종시", "충북", "충남",
-    "전북", "전남", "경북", "경남", "제주"
-]
+# 다양한 지역명 표기를 표준 시·도명으로 변환
+REGION_ALIASES = {
+    "서울": ["서울", "서울특별시"],
+    "부산": ["부산", "부산광역시"],
+    "대구": ["대구", "대구광역시"],
+    "인천": ["인천", "인천광역시"],
+    "광주": ["광주", "광주광역시"],
+    "대전": ["대전", "대전광역시"],
+    "울산": ["울산", "울산광역시"],
+    "세종": ["세종", "세종시", "세종특별자치시"],
+    "경기": ["경기", "경기도"],
+    "강원": ["강원", "강원도", "강원특별자치도"],
+    "충북": ["충북", "충청북도"],
+    "충남": ["충남", "충청남도"],
+    "전북": ["전북", "전라북도", "전북특별자치도"],
+    "전남": ["전남", "전라남도"],
+    "경북": ["경북", "경상북도"],
+    "경남": ["경남", "경상남도"],
+    "제주": ["제주", "제주도", "제주특별자치도"]
+}
 
 
-def get_province(region_name):
-    """지역 열에서 광역자치단체 이름을 추출합니다."""
-    region_name = str(region_name).strip()
+def get_province(column_name):
+    name = str(column_name).strip()
 
-    if region_name == "세종시":
-        return "세종시"
-
-    for prefix in PROVINCE_PREFIXES:
-        if region_name == prefix or region_name.startswith(prefix + " "):
-            return prefix
+    for province, aliases in REGION_ALIASES.items():
+        for alias in aliases:
+            if name == alias or name.startswith(alias + " "):
+                return province
 
     return None
 
 
-# --------------------------------------------------
-# 3. CSV 파일 불러오기
-# --------------------------------------------------
+# ==========================================
+# 3. 데이터 불러오기
+# ==========================================
+
 @st.cache_data
 def load_data(file_path):
 
-    data = None
-    last_error = None
+    df = None
 
     for encoding in ["cp949", "utf-8-sig", "utf-8"]:
         try:
-            data = pd.read_csv(file_path, encoding=encoding)
+            df = pd.read_csv(file_path, encoding=encoding)
             break
-        except UnicodeDecodeError as error:
-            last_error = error
-
-    if data is None:
-        raise ValueError(
-            f"CSV 인코딩을 확인할 수 없습니다: {last_error}"
-        )
-
-    required_columns = [
-        "범죄대분류",
-        "범죄중분류"
-    ]
-
-    missing_columns = [
-        col for col in required_columns
-        if col not in data.columns
-    ]
-
-    if missing_columns:
-        raise ValueError(
-            "CSV에 필요한 열이 없습니다: "
-            + ", ".join(missing_columns)
-        )
-
-    # 외국 관련 열은 제외하고 국내 지역 열만 추출
-    region_columns = []
-
-    for col in data.columns:
-
-        if col in required_columns:
+        except UnicodeDecodeError:
             continue
 
-        if str(col).startswith("외국 "):
-            continue
+    if df is None:
+        raise ValueError("CSV 파일의 인코딩을 확인해주세요.")
 
-        if get_province(col) is not None:
-            region_columns.append(col)
+    required = ["범죄대분류", "범죄중분류"]
+
+    for column in required:
+        if column not in df.columns:
+            raise ValueError(
+                f"CSV에 '{column}' 열이 없습니다."
+            )
+
+    region_columns = [
+        col for col in df.columns
+        if get_province(col) is not None
+    ]
 
     if not region_columns:
         raise ValueError(
-            "CSV에서 국내 시·군·구 지역 열을 찾지 못했습니다."
+            "지역 열을 찾을 수 없습니다. CSV의 지역 열 이름을 확인해주세요."
         )
 
     for col in region_columns:
-        data[col] = pd.to_numeric(
-            data[col],
+        df[col] = pd.to_numeric(
+            df[col],
             errors="coerce"
         ).fillna(0)
 
-    return data, region_columns
+    return df, region_columns
 
 
 if not DATA_PATH.exists():
-
     st.error(
-        "crime.csv 파일을 찾을 수 없습니다.\n\n"
-        "GitHub 저장소에서 app.py와 crime.csv가 "
-        "같은 폴더에 있는지 확인하세요."
+        "crime.csv 파일을 찾을 수 없습니다. "
+        "app.py와 crime.csv가 같은 폴더에 있는지 확인해주세요."
     )
-
     st.stop()
-
 
 try:
     data, region_columns = load_data(str(DATA_PATH))
 
-except Exception as error:
-
-    st.error(
-        f"데이터를 불러오는 중 오류가 발생했습니다: {error}"
-    )
-
+except Exception as e:
+    st.error(f"데이터 오류: {e}")
     st.stop()
 
 
-# --------------------------------------------------
-# 4. 분석 지역 선택
-# --------------------------------------------------
-st.subheader("📍 분석할 지역 선택")
+# ==========================================
+# 4. 지역 선택
+# ==========================================
+
+st.subheader("📍 분석 지역 선택")
 
 selected_region = st.selectbox(
-    "전국 시·군·구 중 분석할 지역을 선택하세요.",
-    options=region_columns
+    "분석할 지역을 선택하세요.",
+    region_columns
 )
 
 selected_province = get_province(selected_region)
 
-# 선택한 지역의 범죄 자료
 selected_data = data[
     ["범죄대분류", "범죄중분류", selected_region]
 ].copy()
 
 selected_data = selected_data.rename(
-    columns={
-        selected_region: "발생 건수"
-    }
+    columns={selected_region: "발생 건수"}
 )
 
 selected_data["발생 건수"] = pd.to_numeric(
@@ -186,134 +172,115 @@ selected_data = selected_data[
 ]
 
 
-# --------------------------------------------------
-# 5. 선택 지역 통계
-# --------------------------------------------------
-total_crime = int(
-    selected_data["발생 건수"].sum()
-)
+# ==========================================
+# 5. 통계 계산
+# ==========================================
+
+total_crime = int(selected_data["발생 건수"].sum())
 
 major_data = (
-    selected_data.groupby(
-        "범죄대분류",
-        as_index=False
-    )["발생 건수"]
+    selected_data.groupby("범죄대분류")["발생 건수"]
     .sum()
-    .sort_values(
-        "발생 건수",
-        ascending=False
-    )
+    .reset_index()
+    .sort_values("발생 건수", ascending=False)
 )
 
 minor_data = (
     selected_data.groupby(
-        ["범죄대분류", "범죄중분류"],
-        as_index=False
+        ["범죄대분류", "범죄중분류"]
     )["발생 건수"]
     .sum()
-    .sort_values(
-        "발생 건수",
-        ascending=False
-    )
+    .reset_index()
+    .sort_values("발생 건수", ascending=False)
 )
 
-st.subheader(
-    f"📊 {selected_region} 범죄 현황"
-)
+col1, col2, col3 = st.columns(3)
 
-metric1, metric2, metric3 = st.columns(3)
-
-metric1.metric(
-    "전체 범죄 발생 건수",
-    f"{total_crime:,}건"
-)
-
-metric2.metric(
-    "범죄 대분류 수",
-    f"{len(major_data)}종"
-)
-
-metric3.metric(
-    "세부 범죄 유형 수",
-    f"{len(minor_data)}종"
-)
+col1.metric("전체 범죄 발생 건수", f"{total_crime:,}건")
+col2.metric("범죄 대분류", f"{len(major_data)}종")
+col3.metric("범죄 중분류", f"{len(minor_data)}종")
 
 
-# --------------------------------------------------
-# 6. 대한민국 전국 범죄 현황 지도
-# --------------------------------------------------
-st.subheader("🗺️ 대한민국 전국 범죄 현황 지도")
+# ==========================================
+# 6. 시·도별 범죄 건수 계산
+# ==========================================
 
-st.write(
-    "지도에서 시·도별 마커를 누르면 "
-    "해당 지역의 범죄 발생 건수를 확인할 수 있습니다."
-)
-
-# 시·도별 범죄 발생 건수 합산
 province_totals = {}
 
-for province in PROVINCE_COORDS:
+for province in REGION_COORDS:
 
-    province_cols = [
+    columns = [
         col for col in region_columns
         if get_province(col) == province
     ]
 
-    if province_cols:
-
+    if columns:
         province_totals[province] = int(
-            data[province_cols]
-            .apply(pd.to_numeric, errors="coerce")
-            .fillna(0)
-            .to_numpy()
-            .sum()
+            data[columns].sum().sum()
         )
 
 
-# 전국 지도 생성
+# ==========================================
+# 7. OpenStreetMap 전국 지도
+# ==========================================
+
+st.subheader("🗺️ 대한민국 전국 범죄 현황 지도")
+
+st.write(
+    "지도에서 지역별 마커를 클릭하면 "
+    "해당 지역의 범죄 발생 건수를 확인할 수 있습니다."
+)
+
+# OpenStreetMap을 배경으로 사용
 crime_map = folium.Map(
     location=[36.3, 127.8],
     zoom_start=7,
-    tiles="CartoDB positron",
+    min_zoom=6,
+    max_zoom=15,
+    tiles="OpenStreetMap",
     control_scale=True
 )
 
-max_total = (
-    max(province_totals.values())
-    if province_totals
-    else 1
-)
+# 지도 표시 영역 설정
+crime_map.fit_bounds([
+    [33.0, 124.0],
+    [39.0, 132.0]
+])
 
+# 마커 크기 계산
+max_crime = max(province_totals.values()) if province_totals else 1
 
-# 시·도별 마커 표시
-for province, coordinates in PROVINCE_COORDS.items():
+for province, coordinates in REGION_COORDS.items():
 
     if province not in province_totals:
         continue
 
     count = province_totals[province]
 
+    # 선택한 시·도 강조
     is_selected = province == selected_province
 
-    marker_radius = 7 + (count / max_total) * 13
+    radius = 7 + (count / max_crime) * 13
+
+    marker_color = "red" if is_selected else "blue"
 
     popup_html = f"""
-    <div style='font-family: sans-serif; min-width: 150px;'>
-        <b>{province}</b><br>
-        전체 범죄 발생 건수:
-        <b>{count:,}건</b><br>
-        {'선택한 지역이 포함된 시·도' if is_selected else ''}
+    <div style="font-family:Arial; width:180px;">
+        <h4>{province}</h4>
+        <p>범죄 발생 건수</p>
+        <h3>{count:,}건</h3>
+        <p>선택 지역: {selected_region}</p>
     </div>
     """
 
     folium.CircleMarker(
         location=coordinates,
-        radius=marker_radius,
-        color="#d62728" if is_selected else "#2878b5",
-        weight=3 if is_selected else 1.5,
+        radius=radius,
+        color=marker_color,
+        weight=2,
         fill=True,
-        fill_color="#ff4d4d" if is_selected else "#5b9bd5",
-        fill_opacity=0.85,
+        fill_color=marker_color,
+        fill_opacity=0.65,
         tooltip=f"{province}: {count:,}건",
         popup=folium.Popup(
             popup_html,
@@ -321,92 +288,89 @@ for province, coordinates in PROVINCE_COORDS.items():
         )
     ).add_to(crime_map)
 
-    # 지도 위에 지역 이름 표시
+    # 지역명 표시
     folium.Marker(
         location=coordinates,
-        tooltip=f"{province} {count:,}건",
         icon=folium.DivIcon(
-            html=(
-                "<div style='font-size:10px; font-weight:bold; "
-                "color:#202020; white-space:nowrap;'>"
-                f"{province}</div>"
-            )
+            html=f"""
+            <div style="
+                font-size:11px;
+                font-weight:bold;
+                color:#222;
+                white-space:nowrap;
+                text-shadow:1px 1px white;
+            ">
+                {province}
+            </div>
+            """
         )
     ).add_to(crime_map)
 
 
-# Streamlit 화면에 지도 출력
+# 지도 화면 출력
 st_folium(
     crime_map,
+    width=None,
+    height=600,
     use_container_width=True,
-    height=560,
     returned_objects=[],
-    key="national_crime_map"
+    key="korea_crime_map"
 )
 
 st.caption(
-    "※ 지도는 시·도별 중심 좌표에 마커를 표시합니다. "
-    "마커의 범죄 건수는 해당 시·도에 속한 CSV 지역 열의 합계이며, "
-    "시·군·구 경계선을 표시하는 지도는 아닙니다."
+    "지도 출처: OpenStreetMap contributors. "
+    "마커는 시·도별 범죄 발생 건수를 나타냅니다."
 )
 
 
-# --------------------------------------------------
-# 7. 시·도별 범죄 발생 건수 표
-# --------------------------------------------------
+# ==========================================
+# 8. 시·도별 범죄 통계
+# ==========================================
+
+st.subheader("📊 전국 시·도별 범죄 발생 건수")
+
 if province_totals:
 
-    province_summary = pd.DataFrame(
+    province_df = pd.DataFrame(
         list(province_totals.items()),
-        columns=[
-            "시·도",
-            "범죄 발생 건수"
-        ]
+        columns=["지역", "범죄 발생 건수"]
     ).sort_values(
         "범죄 발생 건수",
         ascending=False
     )
 
-    with st.expander(
-        "시·도별 범죄 발생 건수 표 보기"
-    ):
+    fig_province = px.bar(
+        province_df,
+        x="지역",
+        y="범죄 발생 건수",
+        color="범죄 발생 건수",
+        color_continuous_scale="Reds",
+        text="범죄 발생 건수",
+        title="전국 시·도별 범죄 발생 건수"
+    )
 
-        st.dataframe(
-            province_summary,
-            use_container_width=True,
-            hide_index=True
-        )
+    st.plotly_chart(
+        fig_province,
+        use_container_width=True
+    )
 
 
-# --------------------------------------------------
-# 8. 범죄 대분류별 분석
-# --------------------------------------------------
+# ==========================================
+# 9. 범죄 대분류 분석
+# ==========================================
+
 st.subheader("📈 범죄 대분류별 발생 건수")
 
 if not major_data.empty:
 
     fig_major = px.bar(
-        major_data.sort_values(
-            "발생 건수",
-            ascending=True
-        ),
-        x="발생 건수",
-        y="범죄대분류",
-        orientation="h",
-        text="발생 건수",
+        major_data,
+        x="범죄대분류",
+        y="발생 건수",
         color="발생 건수",
         color_continuous_scale="Blues",
-        labels={
-            "범죄대분류": "범죄 유형",
-            "발생 건수": "발생 건수"
-        },
-        title=f"{selected_region} 범죄 대분류별 발생 건수"
-    )
-
-    fig_major.update_layout(
-        coloraxis_showscale=False,
-        height=500,
-        yaxis_title=""
+        text="발생 건수",
+        title=f"{selected_region} 범죄 대분류 분석"
     )
 
     st.plotly_chart(
@@ -414,61 +378,36 @@ if not major_data.empty:
         use_container_width=True
     )
 
-else:
 
-    st.info(
-        "선택한 지역에 표시할 범죄 데이터가 없습니다."
-    )
+# ==========================================
+# 10. 범죄 중분류 분석
+# ==========================================
 
-
-# --------------------------------------------------
-# 9. 범죄 중분류별 상세 분석
-# --------------------------------------------------
-st.subheader("🔍 세부 범죄 유형 분석")
+st.subheader("🔎 세부 범죄 유형 분석")
 
 if not major_data.empty:
 
-    category_list = major_data[
-        "범죄대분류"
-    ].tolist()
+    categories = major_data["범죄대분류"].tolist()
 
     selected_categories = st.multiselect(
-        "확인할 범죄 대분류를 선택하세요.",
-        options=category_list,
-        default=category_list
+        "분석할 범죄 대분류를 선택하세요.",
+        categories,
+        default=categories
     )
 
     filtered_data = minor_data[
-        minor_data["범죄대분류"].isin(
-            selected_categories
-        )
+        minor_data["범죄대분류"].isin(selected_categories)
     ]
 
     if not filtered_data.empty:
 
         fig_minor = px.bar(
-            filtered_data.sort_values(
-                "발생 건수",
-                ascending=True
-            ),
+            filtered_data,
             x="발생 건수",
             y="범죄중분류",
             color="범죄대분류",
             orientation="h",
-            title=f"{selected_region} 세부 범죄 유형별 발생 건수",
-            labels={
-                "범죄중분류": "세부 범죄 유형",
-                "발생 건수": "발생 건수",
-                "범죄대분류": "범죄 대분류"
-            }
-        )
-
-        fig_minor.update_layout(
-            height=max(
-                450,
-                min(1000, len(filtered_data) * 30)
-            ),
-            yaxis_title=""
+            title=f"{selected_region} 세부 범죄 유형 분석"
         )
 
         st.plotly_chart(
@@ -477,31 +416,28 @@ if not major_data.empty:
         )
 
         st.dataframe(
-            filtered_data.rename(
-                columns={
-                    "범죄대분류": "범죄 대분류",
-                    "범죄중분류": "범죄 중분류"
-                }
-            ),
+            filtered_data,
             use_container_width=True,
             hide_index=True
         )
 
     else:
+        st.info("선택한 범죄 유형의 데이터가 없습니다.")
 
-        st.info(
-            "선택한 범죄 대분류의 데이터가 없습니다."
-        )
 
-else:
+# ==========================================
+# 11. 데이터 표
+# ==========================================
 
-    st.info(
-        "표시할 세부 범죄 데이터가 없습니다."
+with st.expander("원본 데이터 확인하기"):
+
+    st.dataframe(
+        data,
+        use_container_width=True
     )
-
 
 st.divider()
 
 st.caption(
-    "데이터 출처: 사용자가 제공한 crime.csv 파일"
+    "대한민국 범죄 현황 분석 프로젝트"
 )
